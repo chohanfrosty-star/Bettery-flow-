@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16" />
+      <stop offset="50%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+    <linearGradient id="aurora" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="50%" stop-color="#00d2ff" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+    <linearGradient id="bolt" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#00d2ff" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="16" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <!-- Background with subtle squircle shape -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)" />
+  <rect width="504" height="504" x="4" y="4" rx="108" fill="none" stroke="#1e293b" stroke-width="4" />
+  
+  <!-- Outer Energy Ring -->
+  <circle cx="256" cy="256" r="160" fill="none" stroke="#1e293b" stroke-width="14" stroke-dasharray="10 8" opacity="0.6" />
+  <circle cx="256" cy="256" r="160" fill="none" stroke="url(#aurora)" stroke-width="14" stroke-dasharray="680 320" stroke-linecap="round" filter="url(#glow)" />
+  
+  <!-- Inner Battery Cell Outline -->
+  <rect x="186" y="146" width="140" height="220" rx="28" fill="#0b1120" stroke="url(#aurora)" stroke-width="8" />
+  <!-- Terminal Cap -->
+  <path d="M 226 132 L 286 132 A 8 8 0 0 1 294 140 L 294 146 L 218 146 L 218 140 A 8 8 0 0 1 226 132 Z" fill="url(#aurora)" />
+  
+  <!-- Charge level liquid fill inside battery -->
+  <rect x="198" y="226" width="116" height="128" rx="16" fill="url(#aurora)" opacity="0.85" filter="url(#glow)" />
+  
+  <!-- Lightning Bolt -->
+  <path d="M 264 178 L 226 262 L 254 262 L 244 334 L 288 248 L 258 248 Z" fill="url(#bolt)" />
+</svg>

@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">BatteryFlow</string>
+    <string name="battery_level">Battery Level</string>
+    <string name="charging">Charging</string>
+    <string name="discharging">Discharging</string>
+    <string name="full">Fully Charged</string>
+    <string name="unavailable">Unavailable on this device</string>
+</resources>

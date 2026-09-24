@@ -1,0 +1,91 @@
+{
+  "entities": {
+    "UserSubscription": {
+      "title": "User Subscription",
+      "description": "Verified Google Play subscription record for a user",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated user UID"
+        },
+        "productId": {
+          "type": "string",
+          "description": "Google Play subscription product identifier"
+        },
+        "orderId": {
+          "type": "string",
+          "description": "Google Play GPA order ID"
+        },
+        "purchaseToken": {
+          "type": "string",
+          "description": "Google Play purchase token"
+        },
+        "status": {
+          "type": "string",
+          "description": "Subscription status (ACTIVE, IN_GRACE_PERIOD, CANCELLED_ACTIVE, EXPIRED)"
+        },
+        "isVerified": {
+          "type": "boolean",
+          "description": "Whether purchase is cryptographically verified"
+        },
+        "expiryTime": {
+          "type": "number",
+          "description": "Expiry timestamp in epoch milliseconds"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last status synchronization"
+        }
+      },
+      "required": ["userId", "status", "isVerified"]
+    },
+    "TelemetryBackup": {
+      "title": "Telemetry Backup",
+      "description": "Synced historical battery telemetry record",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "User UID who owns the telemetry record"
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Epoch timestamp of battery observation"
+        },
+        "level": {
+          "type": "number",
+          "description": "Battery percentage level (0-100)"
+        },
+        "state": {
+          "type": "string",
+          "description": "Charging, discharging, full, or not charging"
+        },
+        "currentMa": {
+          "type": "number",
+          "description": "Current reading in milliamperes or null"
+        },
+        "voltageV": {
+          "type": "number",
+          "description": "Voltage reading in Volts or null"
+        },
+        "tempC": {
+          "type": "number",
+          "description": "Temperature in Celsius or null"
+        }
+      },
+      "required": ["userId", "timestamp", "level", "state"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/subscription/{subscriptionId}": {
+      "schema": "UserSubscription",
+      "description": "User Google Play subscription state"
+    },
+    "/users/{userId}/telemetry/{telemetryId}": {
+      "schema": "TelemetryBackup",
+      "description": "User historical battery telemetry points"
+    }
+  }
+}
