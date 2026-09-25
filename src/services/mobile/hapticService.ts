@@ -8,6 +8,15 @@ export const HapticService = {
    * Subtle tick for tab switches, segmented buttons, and chips
    */
   light(): void {
+    const win = typeof window !== 'undefined' ? (window as unknown as { AndroidNative?: { vibrate?: (ms: number) => void } }) : null;
+    if (win?.AndroidNative?.vibrate) {
+      try {
+        win.AndroidNative.vibrate(8);
+        return;
+      } catch {
+        // Fallback to navigator
+      }
+    }
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
         navigator.vibrate(8);
@@ -21,6 +30,15 @@ export const HapticService = {
    * Distinct click for buttons, toggles, and modal interactions
    */
   medium(): void {
+    const win = typeof window !== 'undefined' ? (window as unknown as { AndroidNative?: { vibrate?: (ms: number) => void } }) : null;
+    if (win?.AndroidNative?.vibrate) {
+      try {
+        win.AndroidNative.vibrate(16);
+        return;
+      } catch {
+        // Fallback
+      }
+    }
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
         navigator.vibrate(16);
@@ -34,6 +52,15 @@ export const HapticService = {
    * Prominent feedback for destructive actions or important triggers
    */
   heavy(): void {
+    const win = typeof window !== 'undefined' ? (window as unknown as { AndroidNative?: { vibrate?: (ms: number) => void } }) : null;
+    if (win?.AndroidNative?.vibrate) {
+      try {
+        win.AndroidNative.vibrate(30);
+        return;
+      } catch {
+        // Fallback
+      }
+    }
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
         navigator.vibrate(30);
@@ -47,6 +74,15 @@ export const HapticService = {
    * Dual-pulse success confirmation
    */
   success(): void {
+    const win = typeof window !== 'undefined' ? (window as unknown as { AndroidNative?: { vibrate?: (ms: number) => void } }) : null;
+    if (win?.AndroidNative?.vibrate) {
+      try {
+        win.AndroidNative.vibrate(20);
+        return;
+      } catch {
+        // Fallback
+      }
+    }
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
         navigator.vibrate([10, 40, 15]);
@@ -60,6 +96,15 @@ export const HapticService = {
    * Alert or warning vibration sequence
    */
   warning(): void {
+    const win = typeof window !== 'undefined' ? (window as unknown as { AndroidNative?: { vibrate?: (ms: number) => void } }) : null;
+    if (win?.AndroidNative?.vibrate) {
+      try {
+        win.AndroidNative.vibrate(40);
+        return;
+      } catch {
+        // Fallback
+      }
+    }
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
         navigator.vibrate([25, 40, 25]);

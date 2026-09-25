@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BatteryCharging, RefreshCw, Zap, ShieldCheck, Sparkles, SlidersHorizontal, Info } from 'lucide-react';
 import { LookSettings } from '../types';
 import { HapticService } from '../services/mobile/hapticService';
+import { PWAInstallButton } from './mobile/PWAInstallButton';
 
 interface HeaderProps {
   isCharging: boolean;
@@ -69,7 +70,7 @@ export const Header: React.FC<HeaderProps> = ({
   const accentColor = getAccentColorHex();
 
   return (
-    <header className="w-full pt-[max(env(safe-area-inset-top,0px),0.75rem)] pb-2.5 px-4 flex items-center justify-between border-b border-white/5 relative z-20 backdrop-blur-md">
+    <header className="w-full shrink-0 pt-[max(env(safe-area-inset-top,0px),0.75rem)] pb-2.5 px-4 flex items-center justify-between border-b border-white/5 relative z-20 backdrop-blur-md">
       {/* Brand Identity */}
       <div className="flex items-center space-x-2.5">
         <div
@@ -124,6 +125,9 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Action Controls */}
       <div className="flex items-center space-x-1.5">
+        {/* PWA Install Trigger (automatically hidden if already standalone or installed) */}
+        <PWAInstallButton accent={lookSettings.accent} variant="compact" />
+
         {/* Pro Status / Upgrade Button */}
         {onOpenPaywall && (
           <button

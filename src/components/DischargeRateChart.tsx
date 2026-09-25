@@ -1,16 +1,8 @@
-import React, { useMemo, useState } from 'react';
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  ReferenceLine,
-} from 'recharts';
+import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
+import * as d3 from 'd3';
 import { ObservationPoint, AccentColor } from '../types';
-import { TrendingDown, Activity, Zap, Info, Clock } from 'lucide-react';
+import { TrendingDown, Activity, AlertTriangle, Clock, Zap, ShieldAlert, Sparkles } from 'lucide-react';
+import { HapticService } from '../services/mobile/hapticService';
 
 interface DischargeRateChartProps {
   observations: ObservationPoint[];
@@ -34,9 +26,20 @@ export const DischargeRateChart: React.FC<DischargeRateChartProps> = ({
   timeFormat = '24h',
 }) => {
   const [viewMode, setViewMode] = useState<'rate' | 'level'>('rate');
+  const [hoveredPoint, setHoveredPoint] = useState<ChartDataPoint | null>(null);
+  const [scrubberX, setScrubberX] = useState<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const lastHapticIndexRef = useRef<number>(-1);
 
-  const getAccentColor = () => {
-    switch (accent) {
+  // Responsive dimensions state
+  const [dimensions, setDimensions] = useState<{ width: number; height: number }>({
+    width: 360,
+    height: 220,
+  });
+
+  const getAccentHex = (acc: AccentColor): string => {
+    switch (acc) {
       case 'Cyan':
         return '#00d2ff';
       case 'Amber':
@@ -48,20 +51,47 @@ export const DischargeRateChart: React.FC<DischargeRateChartProps> = ({
     }
   };
 
-  const accentColor = getAccentColor();
+  const accentColor = getAccentHex(accent);
 
-  // Process observations into 24-hour discharge rate data points
-  const { chartData, avgRate, peakRate, currentRate } = useMemo(() => {
+  // ResizeObserver to automatically adapt SVG to mobile screen width
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width } = entry.contentRect;
+        if (width > 0) {
+          setDimensions({
+            width,
+            height: Math.min(240, Math.max(190, Math.round(width * 0.58))),
+          });
+        }
+      }
+    });
+
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // Process raw observations into 24-hour rolling telemetry data points
+  const { chartData, avgRate, peakRate, currentRate, peakPoint, highDrainCount } = useMemo(() => {
     const now = Date.now();
     const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
 
-    // Filter to last 24h and sort ascending by timestamp
+    // Filter to observations within the last 24h and sort ascending
     const filtered = (observations || [])
       .filter((p) => p.timestamp >= twentyFourHoursAgo)
       .sort((a, b) => a.timestamp - b.timestamp);
 
     if (filtered.length < 2) {
-      return { chartData: [], avgRate: 0, peakRate: 0, currentRate: 0 };
+      return {
+        chartData: [],
+        avgRate: 0,
+        peakRate: 0,
+        currentRate: 0,
+        peakPoint: null as ChartDataPoint | null,
+        highDrainCount: 0,
+      };
     }
 
     const data: ChartDataPoint[] = [];
@@ -75,19 +105,18 @@ export const DischargeRateChart: React.FC<DischargeRateChartProps> = ({
       if (prev) {
         const deltaHours = (curr.timestamp - prev.timestamp) / (1000 * 60 * 60);
         if (deltaHours > 0.01) {
-          // If level decreased, it's discharging
           const deltaLevel = prev.level - curr.level;
           if (deltaLevel > 0) {
             ratePerHour = +(deltaLevel / deltaHours).toFixed(1);
           } else if (curr.state === 'discharging' && curr.currentMa && curr.currentMa < 0) {
-            // Estimate based on current draw if available (approx 4000mAh battery)
-            const estimatedDropPerHour = Math.abs(curr.currentMa) / 40; // mA to %/hr for 4000mAh
+            // Fallback estimation using current draw (4000mAh reference capacity)
+            const estimatedDropPerHour = Math.abs(curr.currentMa) / 40;
             ratePerHour = +estimatedDropPerHour.toFixed(1);
           }
         }
       }
 
-      // Bound realistic rate between 0 and 35 %/h
+      // Bound realistic discharge rate between 0 and 35 %/h
       ratePerHour = Math.min(35, Math.max(0, ratePerHour));
       if (ratePerHour > 0) {
         rates.push(ratePerHour);
@@ -110,42 +139,179 @@ export const DischargeRateChart: React.FC<DischargeRateChartProps> = ({
         dischargeRate: ratePerHour,
         level: curr.level,
         isCharging: curr.state === 'charging',
-        powerW: curr.powerW,
-        currentMa: curr.currentMa,
+        powerW: curr.powerW ?? null,
+        currentMa: curr.currentMa ?? null,
       });
     }
 
     const calculatedAvg =
       rates.length > 0 ? +(rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(1) : 4.2;
-    const calculatedPeak =
-      rates.length > 0 ? Math.max(...rates) : 12.5;
-    const latestRate =
-      data.length > 0 ? data[data.length - 1].dischargeRate : 0;
+    const calculatedPeak = rates.length > 0 ? Math.max(...rates) : 12.5;
+    const latestRate = data.length > 0 ? data[data.length - 1].dischargeRate : 0;
+
+    let peakItem: ChartDataPoint | null = null;
+    let highCount = 0;
+
+    for (const d of data) {
+      if (!peakItem || d.dischargeRate > peakItem.dischargeRate) {
+        peakItem = d;
+      }
+      if (d.dischargeRate >= 10) {
+        highCount++;
+      }
+    }
 
     return {
       chartData: data,
       avgRate: calculatedAvg,
       peakRate: calculatedPeak,
       currentRate: latestRate,
+      peakPoint: peakItem,
+      highDrainCount: highCount,
     };
   }, [observations, timeFormat]);
+
+  // Chart Margins & Inner Canvas Dimensions
+  const margin = { top: 22, right: 14, bottom: 28, left: 34 };
+  const innerWidth = Math.max(0, dimensions.width - margin.left - margin.right);
+  const innerHeight = Math.max(0, dimensions.height - margin.top - margin.bottom);
+
+  // D3 Scales Calculation
+  const { xScale, yScale, areaPath, linePath, yTicks, xTicks, yMax } = useMemo(() => {
+    if (chartData.length < 2 || innerWidth <= 0 || innerHeight <= 0) {
+      return {
+        xScale: null,
+        yScale: null,
+        areaPath: '',
+        linePath: '',
+        yTicks: [],
+        xTicks: [],
+        yMax: 0,
+      };
+    }
+
+    const minTime = chartData[0].timestamp;
+    const maxTime = chartData[chartData.length - 1].timestamp;
+
+    const xs = d3.scaleTime().domain([new Date(minTime), new Date(maxTime)]).range([0, innerWidth]);
+
+    const targetMax =
+      viewMode === 'rate'
+        ? Math.max(14, Math.ceil(peakRate * 1.2))
+        : 100;
+
+    const ys = d3
+      .scaleLinear()
+      .domain([0, targetMax])
+      .range([innerHeight, 0])
+      .nice();
+
+    // D3 Curve & Area Generators
+    const valueAccessor = (d: ChartDataPoint) =>
+      viewMode === 'rate' ? d.dischargeRate : d.level;
+
+    const lineGenerator = d3
+      .line<ChartDataPoint>()
+      .x((d) => xs(new Date(d.timestamp)))
+      .y((d) => ys(valueAccessor(d)))
+      .curve(d3.curveMonotoneX);
+
+    const areaGenerator = d3
+      .area<ChartDataPoint>()
+      .x((d) => xs(new Date(d.timestamp)))
+      .y0(innerHeight)
+      .y1((d) => ys(valueAccessor(d)))
+      .curve(d3.curveMonotoneX);
+
+    const lPath = lineGenerator(chartData) || '';
+    const aPath = areaGenerator(chartData) || '';
+
+    // Calculate intelligent tick steps
+    const yTickValues = ys.ticks(4);
+    const xTickValues = xs.ticks(innerWidth > 320 ? 5 : 4);
+
+    return {
+      xScale: xs,
+      yScale: ys,
+      areaPath: aPath,
+      linePath: lPath,
+      yTicks: yTickValues,
+      xTicks: xTickValues,
+      yMax: targetMax,
+    };
+  }, [chartData, viewMode, peakRate, innerWidth, innerHeight]);
+
+  // Touch & Pointer Scrubber Interaction
+  const handlePointerMove = useCallback(
+    (event: React.PointerEvent<SVGSVGElement>) => {
+      if (!xScale || !svgRef.current || chartData.length < 2) return;
+
+      const rect = svgRef.current.getBoundingClientRect();
+      const pointerX = event.clientX - rect.left - margin.left;
+
+      if (pointerX < 0 || pointerX > innerWidth) {
+        setHoveredPoint(null);
+        setScrubberX(null);
+        return;
+      }
+
+      const hoveredDate = xScale.invert(pointerX);
+      const hoveredTimestamp = hoveredDate.getTime();
+
+      // D3 Bisector for fast O(log N) lookup
+      const bisect = d3.bisector<ChartDataPoint, number>((d) => d.timestamp).center;
+      const index = bisect(chartData, hoveredTimestamp);
+      const clampedIndex = Math.max(0, Math.min(chartData.length - 1, index));
+      const targetPoint = chartData[clampedIndex];
+
+      if (targetPoint) {
+        setHoveredPoint(targetPoint);
+        setScrubberX(xScale(new Date(targetPoint.timestamp)));
+
+        // Haptic feedback trigger on point change
+        if (lastHapticIndexRef.current !== clampedIndex) {
+          lastHapticIndexRef.current = clampedIndex;
+          HapticService.light();
+        }
+      }
+    },
+    [xScale, chartData, innerWidth, margin.left]
+  );
+
+  const handlePointerLeave = useCallback(() => {
+    setHoveredPoint(null);
+    setScrubberX(null);
+    lastHapticIndexRef.current = -1;
+  }, []);
+
+  // Format D3 X-Axis ticks
+  const formatXTick = (date: Date): string => {
+    const hours = date.getHours();
+    const mins = date.getMinutes().toString().padStart(2, '0');
+    if (timeFormat === '12h') {
+      const period = hours >= 12 ? 'P' : 'A';
+      const displayHours = hours % 12 || 12;
+      return `${displayHours}:${mins}${period}`;
+    }
+    return `${hours.toString().padStart(2, '0')}:${mins}`;
+  };
 
   return (
     <div
       id="battery-discharge-chart-card"
       className="rounded-2xl p-4 bg-zinc-900/90 border border-white/10 shadow-xl space-y-3 relative overflow-hidden select-none"
     >
-      {/* Subtle Aurora Ambient Radial Glow */}
+      {/* Aurora Ambient Radial Glow */}
       <div
-        className="absolute -top-12 -right-12 w-44 h-44 rounded-full blur-3xl opacity-15 pointer-events-none"
+        className="absolute -top-12 -right-12 w-44 h-44 rounded-full blur-3xl opacity-15 pointer-events-none transition-colors duration-500"
         style={{ backgroundColor: accentColor }}
       />
 
-      {/* Card Header & View Switcher */}
+      {/* Card Header & Controls */}
       <div className="flex items-center justify-between relative z-10">
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2.5">
           <div
-            className="w-7 h-7 rounded-lg flex items-center justify-center"
+            className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors duration-300"
             style={{
               backgroundColor: `${accentColor}18`,
               border: `1px solid ${accentColor}30`,
@@ -154,22 +320,27 @@ export const DischargeRateChart: React.FC<DischargeRateChartProps> = ({
             <TrendingDown className="w-4 h-4" style={{ color: accentColor }} />
           </div>
           <div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-100 flex items-center gap-1.5">
-              <span>Discharge Rate (24H)</span>
-              <span className="text-[9px] font-mono font-bold px-1.5 py-0.2 rounded bg-white/5 text-zinc-400 border border-white/5">
-                Recharts
+            <div className="flex items-center gap-1.5">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-100">
+                Discharge Rate (24H)
+              </h4>
+              <span className="text-[9px] font-mono font-bold px-1.5 py-0.2 rounded bg-white/5 text-zinc-400 border border-white/5 flex items-center gap-1">
+                <Sparkles className="w-2.5 h-2.5 text-cyan-400" /> D3.js
               </span>
-            </h4>
+            </div>
             <span className="text-[10px] text-zinc-400 flex items-center gap-1 font-mono">
               <Clock className="w-2.5 h-2.5" /> 24-hour continuous rolling telemetry
             </span>
           </div>
         </div>
 
-        {/* Mode Toggle: Rate vs Level */}
+        {/* View Mode Toggle: Rate vs Level */}
         <div className="flex items-center bg-black/40 p-0.5 rounded-lg border border-white/10 text-[10px] font-mono">
           <button
-            onClick={() => setViewMode('rate')}
+            onClick={() => {
+              HapticService.light();
+              setViewMode('rate');
+            }}
             className={`px-2 py-0.8 rounded font-semibold transition-all ${
               viewMode === 'rate'
                 ? 'bg-white/15 text-white shadow-xs'
@@ -179,7 +350,10 @@ export const DischargeRateChart: React.FC<DischargeRateChartProps> = ({
             Rate (%/h)
           </button>
           <button
-            onClick={() => setViewMode('level')}
+            onClick={() => {
+              HapticService.light();
+              setViewMode('level');
+            }}
             className={`px-2 py-0.8 rounded font-semibold transition-all ${
               viewMode === 'level'
                 ? 'bg-white/15 text-white shadow-xs'
@@ -191,14 +365,14 @@ export const DischargeRateChart: React.FC<DischargeRateChartProps> = ({
         </div>
       </div>
 
-      {/* 24-Hour Metric KPI Pills */}
+      {/* 24-Hour KPI Summary Strip */}
       <div className="grid grid-cols-3 gap-2 relative z-10">
         <div className="p-2 rounded-xl bg-black/35 border border-white/5 font-mono">
           <span className="text-[9px] uppercase tracking-wider text-zinc-400 block">
             Avg Drain
           </span>
           <div className="flex items-baseline space-x-1 mt-0.5">
-            <span className="text-sm font-bold text-white">{avgRate}</span>
+            <span className="text-sm font-bold text-white tabular-nums">{avgRate}</span>
             <span className="text-[10px] text-zinc-400">%/h</span>
           </div>
         </div>
@@ -208,7 +382,7 @@ export const DischargeRateChart: React.FC<DischargeRateChartProps> = ({
             Peak Drain
           </span>
           <div className="flex items-baseline space-x-1 mt-0.5">
-            <span className="text-sm font-bold text-amber-400">{peakRate}</span>
+            <span className="text-sm font-bold text-amber-400 tabular-nums">{peakRate}</span>
             <span className="text-[10px] text-zinc-400">%/h</span>
           </div>
         </div>
@@ -218,7 +392,7 @@ export const DischargeRateChart: React.FC<DischargeRateChartProps> = ({
             Active Drain
           </span>
           <div className="flex items-baseline space-x-1 mt-0.5">
-            <span className="text-sm font-bold" style={{ color: accentColor }}>
+            <span className="text-sm font-bold tabular-nums" style={{ color: accentColor }}>
               {currentRate > 0 ? `${currentRate}` : 'Idle'}
             </span>
             {currentRate > 0 && <span className="text-[10px] text-zinc-400">%/h</span>}
@@ -226,124 +400,316 @@ export const DischargeRateChart: React.FC<DischargeRateChartProps> = ({
         </div>
       </div>
 
-      {/* Interactive Recharts Line Chart */}
-      <div className="w-full h-48 relative z-10 pt-2 pb-1">
-        {chartData.length > 0 ? (
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={chartData}
-              margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+      {/* High Discharge Anomaly Callout Banner */}
+      {viewMode === 'rate' && highDrainCount > 0 && peakPoint && peakRate >= 10 && (
+        <div className="rounded-xl px-2.5 py-1.5 bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-[11px] text-amber-300 font-mono">
+          <div className="flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span>
+              Peak spike: <strong>{peakPoint.dischargeRate}%/h</strong> at {peakPoint.timeLabel}
+            </span>
+          </div>
+          <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 uppercase font-bold">
+            Heavy Load
+          </span>
+        </div>
+      )}
+
+      {/* Interactive D3 SVG Canvas Container */}
+      <div
+        ref={containerRef}
+        className="w-full relative z-10 pt-1 pb-1 touch-pan-y"
+        style={{ minHeight: `${dimensions.height}px` }}
+      >
+        {chartData.length >= 2 && xScale && yScale ? (
+          <div className="relative w-full">
+            <svg
+              ref={svgRef}
+              width={dimensions.width}
+              height={dimensions.height}
+              className="overflow-visible cursor-crosshair select-none block"
+              onPointerMove={handlePointerMove}
+              onPointerDown={handlePointerMove}
+              onPointerLeave={handlePointerLeave}
+              onPointerCancel={handlePointerLeave}
             >
               <defs>
-                <linearGradient id="rateGlowGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={accentColor} stopOpacity={0.8} />
-                  <stop offset="100%" stopColor={accentColor} stopOpacity={0.1} />
+                {/* Area Gradient with smooth vertical fade */}
+                <linearGradient id="d3RateGlowGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={accentColor} stopOpacity={0.4} />
+                  <stop offset="65%" stopColor={accentColor} stopOpacity={0.08} />
+                  <stop offset="100%" stopColor={accentColor} stopOpacity={0.0} />
                 </linearGradient>
+
+                {/* Subtle Amber Threshold Gradient for high drain zone */}
+                <linearGradient id="d3HighDrainGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.12} />
+                  <stop offset="100%" stopColor="#f59e0b" stopOpacity={0.0} />
+                </linearGradient>
+
+                {/* Scrubber Glow Filter */}
+                <filter id="scrubberGlow" x="-50%" y="-50%" width="200%" height="200%">
+                  <feGaussianBlur stdDeviation="2.5" result="coloredBlur" />
+                  <feMerge>
+                    <feMergeNode in="coloredBlur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
               </defs>
 
-              <CartesianGrid
-                strokeDasharray="3 3"
-                stroke="#27272a"
-                vertical={false}
-              />
+              <g transform={`translate(${margin.left}, ${margin.top})`}>
+                {/* High Drain (>10%/h) Warning Zone Background (Rate View Only) */}
+                {viewMode === 'rate' && yScale(10) > 0 && (
+                  <g className="pointer-events-none">
+                    <rect
+                      x={0}
+                      y={0}
+                      width={innerWidth}
+                      height={Math.max(0, yScale(10))}
+                      fill="url(#d3HighDrainGradient)"
+                    />
+                    <line
+                      x1={0}
+                      y1={yScale(10)}
+                      x2={innerWidth}
+                      y2={yScale(10)}
+                      stroke="#f59e0b"
+                      strokeWidth={1}
+                      strokeDasharray="2 3"
+                      strokeOpacity={0.4}
+                    />
+                    <text
+                      x={innerWidth - 4}
+                      y={Math.max(10, yScale(10) - 4)}
+                      fill="#f59e0b"
+                      fontSize={8}
+                      fontFamily="monospace"
+                      textAnchor="end"
+                      opacity={0.7}
+                    >
+                      Threshold (10%/h)
+                    </text>
+                  </g>
+                )}
 
-              <XAxis
-                dataKey="timeLabel"
-                stroke="#71717a"
-                tick={{ fill: '#a1a1aa', fontSize: 10, fontFamily: 'monospace' }}
-                interval={Math.max(1, Math.floor(chartData.length / 5))}
-                tickLine={false}
-                axisLine={{ stroke: '#3f3f46' }}
-              />
+                {/* Horizontal Grid Lines & Y-Axis Labels */}
+                {yTicks.map((tickVal) => {
+                  const y = yScale(tickVal);
+                  if (y < 0 || y > innerHeight) return null;
+                  return (
+                    <g key={`y-tick-${tickVal}`} className="pointer-events-none">
+                      <line
+                        x1={0}
+                        y1={y}
+                        x2={innerWidth}
+                        y2={y}
+                        stroke="rgba(255, 255, 255, 0.07)"
+                        strokeDasharray="3 3"
+                      />
+                      <text
+                        x={-6}
+                        y={y + 3}
+                        fill="#71717a"
+                        fontSize={9}
+                        fontFamily="monospace"
+                        textAnchor="end"
+                      >
+                        {tickVal}
+                        {viewMode === 'rate' ? '%' : '%'}
+                      </text>
+                    </g>
+                  );
+                })}
 
-              <YAxis
-                domain={viewMode === 'rate' ? [0, 'dataMax + 2'] : [0, 100]}
-                stroke="#71717a"
-                tick={{ fill: '#a1a1aa', fontSize: 10, fontFamily: 'monospace' }}
-                tickLine={false}
-                axisLine={{ stroke: '#3f3f46' }}
-                unit={viewMode === 'rate' ? '%' : '%'}
-              />
+                {/* Vertical Time Ticks & X-Axis Labels */}
+                {xTicks.map((tickDate, idx) => {
+                  const x = xScale(tickDate);
+                  if (x < 0 || x > innerWidth) return null;
+                  return (
+                    <g key={`x-tick-${idx}`} className="pointer-events-none">
+                      <line
+                        x1={x}
+                        y1={0}
+                        x2={x}
+                        y2={innerHeight}
+                        stroke="rgba(255, 255, 255, 0.04)"
+                      />
+                      <text
+                        x={x}
+                        y={innerHeight + 16}
+                        fill="#71717a"
+                        fontSize={9}
+                        fontFamily="monospace"
+                        textAnchor="middle"
+                      >
+                        {formatXTick(tickDate)}
+                      </text>
+                    </g>
+                  );
+                })}
 
-              {viewMode === 'rate' && avgRate > 0 && (
-                <ReferenceLine
-                  y={avgRate}
-                  stroke="#71717a"
-                  strokeDasharray="4 4"
-                  label={{
-                    value: `Avg ${avgRate}%/h`,
-                    fill: '#a1a1aa',
-                    fontSize: 9,
-                    position: 'insideTopRight',
-                    fontFamily: 'monospace',
-                  }}
+                {/* 24H Average Drain Reference Line (Rate View Only) */}
+                {viewMode === 'rate' && avgRate > 0 && yScale(avgRate) <= innerHeight && (
+                  <g className="pointer-events-none">
+                    <line
+                      x1={0}
+                      y1={yScale(avgRate)}
+                      x2={innerWidth}
+                      y2={yScale(avgRate)}
+                      stroke="#a1a1aa"
+                      strokeWidth={1}
+                      strokeDasharray="4 4"
+                      strokeOpacity={0.65}
+                    />
+                    <text
+                      x={6}
+                      y={Math.max(10, yScale(avgRate) - 4)}
+                      fill="#a1a1aa"
+                      fontSize={8.5}
+                      fontFamily="monospace"
+                      fontWeight="bold"
+                    >
+                      Avg {avgRate}%/h
+                    </text>
+                  </g>
+                )}
+
+                {/* D3 Area Path */}
+                <path
+                  d={areaPath}
+                  fill="url(#d3RateGlowGradient)"
+                  className="pointer-events-none transition-all duration-300"
                 />
-              )}
 
-              <Tooltip
-                content={({ active, payload }) => {
-                  if (active && payload && payload.length) {
-                    const data = payload[0].payload as ChartDataPoint;
-                    return (
-                      <div className="bg-zinc-950/95 border border-white/20 p-2.5 rounded-xl shadow-2xl backdrop-blur-md font-mono text-xs z-50 min-w-[150px]">
-                        <div className="flex items-center justify-between border-b border-white/10 pb-1 mb-1.5 text-zinc-400 text-[10px]">
-                          <span>{data.timeLabel}</span>
-                          <span
-                            className={`px-1.5 py-0.2 rounded font-bold uppercase text-[9px] ${
-                              data.isCharging
-                                ? 'bg-cyan-500/20 text-cyan-400'
-                                : 'bg-amber-500/20 text-amber-400'
-                            }`}
-                          >
-                            {data.isCharging ? 'Charging' : 'Discharging'}
-                          </span>
-                        </div>
+                {/* D3 Main Trend Line Path */}
+                <path
+                  d={linePath}
+                  fill="none"
+                  stroke={accentColor}
+                  strokeWidth={2.4}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="pointer-events-none transition-all duration-300"
+                />
 
-                        <div className="space-y-1">
-                          <div className="flex justify-between items-center">
-                            <span className="text-zinc-400">Drain Rate:</span>
-                            <span className="font-bold text-white">
-                              {data.dischargeRate} %/h
-                            </span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-zinc-400">Battery Level:</span>
-                            <span className="font-bold text-emerald-400">
-                              {data.level}%
-                            </span>
-                          </div>
-                          {data.powerW !== null && (
-                            <div className="flex justify-between items-center text-[10px]">
-                              <span className="text-zinc-400">Power:</span>
-                              <span className="text-zinc-300">{data.powerW} W</span>
-                            </div>
-                          )}
-                        </div>
+                {/* Peak Rate Highlight Indicator (when not hovering) */}
+                {!hoveredPoint && peakPoint && viewMode === 'rate' && (
+                  <g
+                    transform={`translate(${xScale(new Date(peakPoint.timestamp))}, ${yScale(
+                      peakPoint.dischargeRate
+                    )})`}
+                    className="pointer-events-none"
+                  >
+                    <circle r={6} fill="#f59e0b" opacity={0.25} />
+                    <circle r={3} fill="#f59e0b" stroke="#ffffff" strokeWidth={1.5} />
+                  </g>
+                )}
+
+                {/* Interactive Touch Scrubber Line & Dot */}
+                {scrubberX !== null && hoveredPoint && (
+                  <g className="pointer-events-none">
+                    {/* Vertical Scrubber Crosshair */}
+                    <line
+                      x1={scrubberX}
+                      y1={0}
+                      x2={scrubberX}
+                      y2={innerHeight}
+                      stroke={accentColor}
+                      strokeWidth={1.5}
+                      strokeDasharray="2 2"
+                      opacity={0.8}
+                    />
+
+                    {/* Active Highlight Dot on the curve */}
+                    <g
+                      transform={`translate(${scrubberX}, ${yScale(
+                        viewMode === 'rate' ? hoveredPoint.dischargeRate : hoveredPoint.level
+                      )})`}
+                    >
+                      <circle
+                        r={8}
+                        fill={accentColor}
+                        opacity={0.35}
+                        filter="url(#scrubberGlow)"
+                      />
+                      <circle
+                        r={4.5}
+                        fill={accentColor}
+                        stroke="#ffffff"
+                        strokeWidth={2}
+                      />
+                    </g>
+                  </g>
+                )}
+              </g>
+            </svg>
+
+            {/* Floating Interactive Scrubber HUD Tooltip */}
+            {hoveredPoint && scrubberX !== null && (
+              <div
+                className="absolute z-30 pointer-events-none transition-all duration-75"
+                style={{
+                  top: '6px',
+                  left: `${Math.min(
+                    innerWidth - 70,
+                    Math.max(margin.left, margin.left + scrubberX - 75)
+                  )}px`,
+                }}
+              >
+                <div className="bg-zinc-950/95 border border-white/20 px-3 py-2 rounded-xl shadow-2xl backdrop-blur-md font-mono text-xs min-w-[155px]">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-1 mb-1.5 text-zinc-400 text-[10px]">
+                    <span className="font-bold text-white">{hoveredPoint.timeLabel}</span>
+                    <span
+                      className={`px-1.5 py-0.2 rounded font-bold uppercase text-[9px] ${
+                        hoveredPoint.isCharging
+                          ? 'bg-cyan-500/20 text-cyan-400'
+                          : 'bg-amber-500/20 text-amber-400'
+                      }`}
+                    >
+                      {hoveredPoint.isCharging ? 'Charging' : 'Discharging'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <span className="text-zinc-400">Drain Rate:</span>
+                      <span
+                        className="font-bold tabular-nums"
+                        style={{
+                          color:
+                            hoveredPoint.dischargeRate >= 10
+                              ? '#f87171'
+                              : hoveredPoint.dischargeRate >= 6
+                              ? '#fbbf24'
+                              : '#ffffff',
+                        }}
+                      >
+                        {hoveredPoint.dischargeRate} %/h
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-zinc-400">Battery Level:</span>
+                      <span className="font-bold text-emerald-400 tabular-nums">
+                        {hoveredPoint.level}%
+                      </span>
+                    </div>
+
+                    {hoveredPoint.powerW !== null && (
+                      <div className="flex justify-between items-center text-[10px]">
+                        <span className="text-zinc-400">Power:</span>
+                        <span className="text-zinc-300 tabular-nums">
+                          {hoveredPoint.powerW} W
+                        </span>
                       </div>
-                    );
-                  }
-                  return null;
-                }}
-              />
-
-              <Line
-                type="monotone"
-                dataKey={viewMode === 'rate' ? 'dischargeRate' : 'level'}
-                stroke={accentColor}
-                strokeWidth={2.5}
-                dot={false}
-                activeDot={{
-                  r: 5,
-                  fill: accentColor,
-                  stroke: '#ffffff',
-                  strokeWidth: 2,
-                }}
-                animationDuration={600}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-center p-4">
+          <div className="h-44 flex flex-col items-center justify-center text-center p-4">
             <Activity className="w-6 h-6 text-zinc-600 mb-2 animate-pulse" />
             <span className="text-xs text-zinc-400 font-mono">
               Collecting 24-hour discharge telemetry...
@@ -354,14 +720,17 @@ export const DischargeRateChart: React.FC<DischargeRateChartProps> = ({
 
       {/* Chart Footer Indicator */}
       <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono pt-1 border-t border-white/5">
-        <span className="flex items-center gap-1">
+        <span className="flex items-center gap-1.5">
           <span
-            className="w-2 h-2 rounded-full inline-block"
+            className="w-2 h-2 rounded-full inline-block transition-colors duration-300"
             style={{ backgroundColor: accentColor }}
           />
-          {viewMode === 'rate' ? 'Discharge rate slope (%/h)' : 'Battery SOC level curve (%)'}
+          {viewMode === 'rate'
+            ? 'Discharge velocity slope (%/h)'
+            : 'Battery state-of-charge SOC (%)'}
         </span>
-        <span className="text-zinc-400">Sample interval: rolling telemetry</span>
+        <span className="text-zinc-400 hidden sm:inline">D3 Monotone Spline Interpolation</span>
+        <span className="text-zinc-400 sm:hidden">D3 24H</span>
       </div>
     </div>
   );

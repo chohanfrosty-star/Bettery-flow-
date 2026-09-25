@@ -13,12 +13,22 @@
 
   html, body {
     width: 100%;
+    height: 100%;
     min-height: 100%;
     min-height: 100dvh;
-    overflow-x: hidden;
+    overflow: hidden;
     touch-action: manipulation;
     overscroll-behavior-y: none;
     -webkit-text-size-adjust: 100%;
+  }
+
+  #root {
+    width: 100%;
+    height: 100%;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   body {
@@ -31,6 +41,17 @@
     -webkit-touch-callout: none;
     background-color: #000000;
   }
+}
+
+/* Mobile touch-first vertical scrolling container with momentum scrolling */
+.mobile-scroll-container,
+main {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+  touch-action: pan-y !important;
+  overscroll-behavior-y: contain;
+  scroll-behavior: smooth;
 }
 
 /* Mobile-app safe area utility classes */

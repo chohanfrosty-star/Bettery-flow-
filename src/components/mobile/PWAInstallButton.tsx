@@ -8,19 +8,21 @@ interface PWAInstallButtonProps {
   accent: AccentColor;
   className?: string;
   variant?: 'compact' | 'full';
+  hideWhenInstalled?: boolean;
 }
 
 export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
   accent,
   className = '',
   variant = 'full',
+  hideWhenInstalled = false,
 }) => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSModal, setShowIOSModal] = useState(false);
 
-  // If already installed/standalone, display a subtle "Installed" badge if full, or null
+  // If already installed/standalone, display a subtle "Installed" badge if full and not hideWhenInstalled, or null
   if (isInstalled) {
-    if (variant === 'compact') return null;
+    if (variant === 'compact' || hideWhenInstalled) return null;
     return (
       <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono">
         <CheckCircle className="w-3.5 h-3.5 shrink-0" />

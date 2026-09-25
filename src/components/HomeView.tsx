@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { PremiumLockCard } from './billing/PremiumLockCard';
 import { DischargeRateChart } from './DischargeRateChart';
+import { PWAInstallButton } from './mobile/PWAInstallButton';
 
 interface HomeViewProps {
   batteryData: LiveBatteryData;
@@ -413,7 +414,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </span>
       </div>
 
-      {/* 5. 24-HOUR BATTERY DISCHARGE RATES (RECHARTS) */}
+      {/* 5. 24-HOUR BATTERY DISCHARGE RATES (D3.JS) */}
       <DischargeRateChart
         observations={observations}
         accent={accent}
@@ -505,6 +506,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* PWA Home Screen Install Banner (automatically hidden when already running installed/standalone) */}
+      <PWAInstallButton accent={accent} hideWhenInstalled />
 
       {/* 6. QUICK ACTIONS & TOOLS */}
       <div className="space-y-2">

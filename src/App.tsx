@@ -307,7 +307,7 @@ export default function App() {
 
   return (
     <div
-      className={`min-h-screen w-full transition-colors duration-300 font-sans ${bgClass} ${
+      className={`h-[100dvh] max-h-[100dvh] w-full transition-colors duration-300 font-sans overflow-hidden flex flex-col ${bgClass} ${
         isLight ? 'theme-light' : ''
       }`}
     >
@@ -318,7 +318,7 @@ export default function App() {
       <MobileOfflineBanner />
 
       {/* Mobile-First Application Container */}
-      <div className="w-full max-w-lg mx-auto min-h-[100dvh] flex flex-col relative md:shadow-2xl overflow-x-hidden">
+      <div className="w-full max-w-lg mx-auto h-full flex flex-col relative md:shadow-2xl overflow-hidden">
         {/* App Header */}
         <Header
           isCharging={batteryData.isCharging}
@@ -334,7 +334,14 @@ export default function App() {
         />
 
         {/* Dynamic View Content with Safe Bottom Margin for Navigation Dock */}
-        <main className="flex-1 px-4 pt-3 pb-32 overflow-y-auto overscroll-contain">
+        <main
+          id="main-scroll-container"
+          className="flex-1 min-h-0 px-4 pt-3 pb-36 overflow-y-auto overscroll-contain mobile-scroll-container"
+          style={{
+            overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
+          }}
+        >
           {currentTab === 'home' && (
             <HomeView
               batteryData={batteryData}
